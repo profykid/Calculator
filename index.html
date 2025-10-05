@@ -1,78 +1,257 @@
-<!DOCTYPE html>
-<html lang="en">
-
+<!doctype html>
+<html lang="hr">
 <head>
-    <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="style.css">
-    <title>Calculator</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Prekovremeni i Spese - Kalkulator</title>
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding:16px; max-width:900px; margin:0 auto; }
+    h1{ font-size:1.4rem; margin-bottom:6px }
+    .card{ background:#f7f7fb; padding:14px; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.04); margin-bottom:12px;}
+    label{ display:block; margin-top:8px; font-size:0.9rem; }
+    input, select, button { width:100%; padding:8px; margin-top:6px; border-radius:6px; border:1px solid #ddd; box-sizing:border-box; }
+    .row{ display:flex; gap:10px; }
+    .col{ flex:1; }
+    @media(max-width:640px){ .row{ flex-direction:column } }
+    .result{ font-weight:600; font-size:1rem; margin-top:8px; }
+    table{ width:100%; border-collapse:collapse; margin-top:8px; }
+    th,td{ border-bottom:1px solid #eee; padding:6px; text-align:left; font-size:0.9rem; }
+    .small{ font-size:0.85rem; color:#666; }
+    .actions{ display:flex; gap:8px; margin-top:10px; }
+    button.primary{ background:#0b63ff; color:white; border:none; }
+    button.ghost{ background:transparent; border:1px solid #ccc; }
+  </style>
 </head>
-
 <body>
+  <h1>Prekovremeni & Spese kalkulator</h1>
+  <div class="card">
+    <div class="small">Unesi datum i vrijeme početka/kraja. Pretpostavka: isti dan (noćna smjena trenutno nije podržana).</div>
 
+    <label>Datum</label>
+    <input type="date" id="date" />
 
-
-    <div class="container">
-
-        <br>
-
-        <table>
-
-            <tr>
-
-                <td>
-                    <input type='text' id='result' class='screen'></td>
-
-                <td>
-
-                    <input type='button' value='C' onclick="clearScreen()" class="clear" />
-
-                </td>
-
-            </tr>
-
-        </table>
-
-        <div class="keys">
-
-            <input type="button" value="7" class="button" onClick="display('7')"></input>
-
-            <input type="button" value="8" class="button " onClick="display('8')"></input>
-
-            <input type="button" value="9" class="button" onClick="display('9')"></input>
-
-            <input type="button" value="/" class="operator" onClick="display('/')"></input>
-
-            <input type="button" value="4" class="button" onClick="display('4')"></input>
-
-            <input type="button" value="5" class="button" onClick="display('5')"></input>
-
-            <input type="button" value="6" class="button" onClick="display('6')"></input>
-
-            <input type="button" value="*" class="operator" onClick="display('*')"></input>
-
-            <input type="button" value="1" class="button" onClick="display('1')"></input>
-
-            <input type="button" value="2" class="button" onClick="display('2')"></input>
-
-            <input type="button" value="3" class="button" onClick="display('3')"></input>
-
-            <input type="button" value="-" class="operator" onClick="display('-')"></input>
-
-            <input type="button" value="0" class="button" onClick="display('0')"></input>
-
-            <input type="button" value="." class="button" onClick="display('.')"></input>
-
-            <input type="button" value="=" class="button equal-sign" onClick="solve()"></input>
-
-            <input type="button" value="+" class="operator" onClick="display('+')"></input>
-
-        </div>
-
+    <div class="row">
+      <div class="col">
+        <label>Početak</label>
+        <input type="time" id="start" />
+      </div>
+      <div class="col">
+        <label>Kraj</label>
+        <input type="time" id="end" />
+      </div>
     </div>
 
-    <script src="script.js"></script>
-</body>
+    <label>Prag radnog vremena bez prekovremenog (sati)</label>
+    <input type="number" id="regularHours" value="8" min="0" step="0.5" />
 
+    <div class="actions">
+      <button class="primary" id="calc">Izračunaj</button>
+      <button class="ghost" id="save">Spremi unos</button>
+      <button class="ghost" id="export">Export CSV</button>
+      <button class="ghost" id="clear">Obriši sve</button>
+    </div>
+
+    <div id="output" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 8px 0">Zapisi</h2>
+    <div class="small">Spremi više unosa. Klikni <em>Export CSV</em> za preuzimanje.</div>
+    <div id="logContainer"></div>
+  </div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+
+  // pravila iz zahtjeva:
+  const BASE_BREAK_MIN = 45;      // uvijek
+  const EXTRA_BREAK_AFTER = "16:00"; // ako radi duže od 16:00
+  const EXTRA_BREAK_MIN = 15;
+  const SPESA_AFTER_1 = "13:30"; // => 20 CHF
+  const SPESA_1 = 20;
+  const SPESA_AFTER_2 = "19:30"; // => +40 CHF
+  const SPESA_2 = 40;
+
+  function parseTime(dateStr, timeStr){
+    if(!dateStr || !timeStr) return null;
+    // dateStr format YYYY-MM-DD, timeStr HH:MM
+    return new Date(dateStr + "T" + timeStr + ":00");
+  }
+
+  function timeStrToMinutes(t){
+    const [hh,mm] = t.split(":").map(Number);
+    return hh*60 + mm;
+  }
+
+  function minutesToHHMM(mins){
+    if(mins < 0) mins = 0;
+    const h = Math.floor(mins/60);
+    const m = Math.round(mins%60);
+    return `${h}h ${m}m`;
+  }
+
+  function minutesToDecimalHours(mins, decimals=2){
+    return (mins/60).toFixed(decimals);
+  }
+
+  function calculate({date, start, end, regularThresholdHours}){
+    const startDt = parseTime(date, start);
+    const endDt = parseTime(date, end);
+    if(!startDt || !endDt) return {error:"Unesi početak i kraj."};
+    if(endDt <= startDt) return {error:"Kraj mora biti nakon početka (trenutno podržano za isti dan)."};
+
+    const rawMinutes = Math.round((endDt - startDt)/60000); // točno minute
+    // primjena pauza:
+    let breaks = 0;
+    // oduzmi 45 min ako ukupno radiš bar 1 min (ili zahtijevaš uvijek)
+    // logika: oduzmi 45 min samo ako rawMinutes > BASE_BREAK_MIN (da ne ide u negativ)
+    if(rawMinutes > BASE_BREAK_MIN) breaks += BASE_BREAK_MIN;
+
+    // ako radiš duže od 16:00 (kraj > 16:00), oduzeti još 15
+    const endMinutesOfDay = endDt.getHours()*60 + endDt.getMinutes();
+    if(endMinutesOfDay > timeStrToMinutes(EXTRA_BREAK_AFTER)){
+      // oduzmi dodatnih EXTRA_BREAK_MIN samo ako nakon odbitka ne postane negativ
+      if(rawMinutes - breaks > EXTRA_BREAK_MIN) breaks += EXTRA_BREAK_MIN;
+    }
+
+    // neto radne minute nakon pauza (minimalno 0)
+    const netMinutes = Math.max(0, rawMinutes - breaks);
+
+    // spese
+    let spese = 0;
+    if(endMinutesOfDay > timeStrToMinutes(SPESA_AFTER_1)) spese += SPESA_1;
+    if(endMinutesOfDay > timeStrToMinutes(SPESA_AFTER_2)) spese += SPESA_2;
+
+    // prekovremeno (iznad praga)
+    const regularThresholdMinutes = Math.round((regularThresholdHours||8)*60);
+    const overtimeMinutes = Math.max(0, netMinutes - regularThresholdMinutes);
+    const regularMinutes = netMinutes - overtimeMinutes;
+
+    return {
+      rawMinutes, breaks, netMinutes, regularMinutes, overtimeMinutes,
+      spese,
+      rawHHMM: minutesToHHMM(rawMinutes),
+      netHHMM: minutesToHHMM(netMinutes),
+      regularHHMM: minutesToHHMM(regularMinutes),
+      overtimeHHMM: minutesToHHMM(overtimeMinutes),
+      netDec: minutesToDecimalHours(netMinutes),
+      overtimeDec: minutesToDecimalHours(overtimeMinutes)
+    };
+  }
+
+  function renderResult(res){
+    const out = $("output");
+    if(res.error){ out.innerHTML = `<div class="result" style="color:#c0392b">${res.error}</div>`; return; }
+    out.innerHTML = `
+      <div class="result">Neto vrijeme: ${res.netHHMM} (${res.netDec} h)</div>
+      <div class="small">Ukupno prije pauza: ${res.rawHHMM}. Oduzeto pauza: ${Math.round(res.breaks)} min.</div>
+      <div class="small">Redovno: ${res.regularHHMM} — Prekovremeno: ${res.overtimeHHMM} (${res.overtimeDec} h)</div>
+      <div style="margin-top:8px; font-weight:600">Spese: CHF ${res.spese.toFixed(2)}</div>
+    `;
+  }
+
+  // Storage log
+  function loadLog(){
+    try{
+      const raw = localStorage.getItem("pv_log_v1");
+      return raw ? JSON.parse(raw) : [];
+    }catch(e){ return []; }
+  }
+  function saveLog(entries){
+    localStorage.setItem("pv_log_v1", JSON.stringify(entries));
+    renderLog();
+  }
+  function addLogEntry(obj){
+    const l = loadLog();
+    l.unshift(obj);
+    saveLog(l);
+  }
+  function renderLog(){
+    const cont = $("logContainer");
+    const list = loadLog();
+    if(list.length === 0){ cont.innerHTML = "<div class='small'>Nema zapisa.</div>"; return; }
+    let html = `<table><thead><tr><th>Datum</th><th>Početak</th><th>Kraj</th><th>Neto</th><th>Prek.</th><th>Spese (CHF)</th></tr></thead><tbody>`;
+    for(const it of list){
+      html += `<tr>
+        <td>${it.date}</td>
+        <td>${it.start}</td>
+        <td>${it.end}</td>
+        <td>${it.netHHMM} (${it.netDec}h)</td>
+        <td>${it.overtimeHHMM} (${it.overtimeDec}h)</td>
+        <td>${it.spese.toFixed(2)}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+    cont.innerHTML = html;
+  }
+
+  // Export CSV
+  function exportCSV(){
+    const list = loadLog();
+    if(list.length === 0){ alert("Nema zapisa za export."); return; }
+    const header = ["date","start","end","rawMinutes","breaks","netMinutes","netHHMM","netDec","overtimeMinutes","overtimeHHMM","overtimeDec","spese"];
+    const rows = [header.join(",")];
+    for(const r of list){
+      const row = header.map(h => JSON.stringify(r[h]===undefined?"":r[h]));
+      rows.push(row.join(","));
+    }
+    const csv = rows.join("\n");
+    const blob = new Blob([csv], {type:"text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "prekovremeni_log.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // Events
+  $("calc").addEventListener("click", () => {
+    const date = $("date").value;
+    const start = $("start").value;
+    const end = $("end").value;
+    const reg = parseFloat($("regularHours").value) || 8;
+    const res = calculate({date, start, end, regularThresholdHours: reg});
+    renderResult(res);
+    // save last result to localStorage for convenience
+    if(!res.error) localStorage.setItem("pv_last", JSON.stringify({date,start,end,regularHours:reg,res}));
+  });
+
+  $("save").addEventListener("click", () => {
+    const date = $("date").value;
+    const start = $("start").value;
+    const end = $("end").value;
+    const reg = parseFloat($("regularHours").value) || 8;
+    const res = calculate({date, start, end, regularThresholdHours: reg});
+    if(res.error){ alert(res.error); return; }
+    addLogEntry({ date, start, end, rawMinutes:res.rawMinutes, breaks:res.breaks, netMinutes:res.netMinutes, netHHMM:res.netHHMM, netDec:res.netDec, overtimeMinutes:res.overtimeMinutes, overtimeHHMM:res.overtimeHHMM, overtimeDec:res.overtimeDec, spese:res.spese });
+    alert("Unos spremljen.");
+  });
+
+  $("export").addEventListener("click", exportCSV);
+
+  $("clear").addEventListener("click", () => {
+    if(confirm("Obrisati sve zapise?")){ localStorage.removeItem("pv_log_v1"); renderLog(); }
+  });
+
+  // restore last
+  (function init(){
+    const last = localStorage.getItem("pv_last");
+    if(last){
+      try{
+        const o = JSON.parse(last);
+        $("date").value = o.date || "";
+        $("start").value = o.start || "";
+        $("end").value = o.end || "";
+        $("regularHours").value = o.regularHours || 8;
+        renderResult(o.res);
+      }catch(e){}
+    }
+    renderLog();
+  })();
+
+})();
+</script>
+</body>
 </html>
